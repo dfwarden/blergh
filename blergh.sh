@@ -1,7 +1,8 @@
 #!/bin/sh
+set -x
 
 BASE_PATH=~/podcasts
-STREAMRIPPER=`which streamripper`
+STREAMRIPPER=`which cvlc`
 PODCAST_DIR=
 OUTPATH=
 RECORD=1
@@ -9,22 +10,24 @@ HOST=
 NAME=
 DURATION=
 URL=
+PODCAST_HOST=
+PODCAST_DESCRIPTION=
 
 loadConfig () {
-  CONFIG_FILE=$1
-  [ -f $CONFIG_FILE ] || fail "Could not find config file \"$CONFIG_FILE\""
-  . $1
+  CONFIG_FILE="$1"
+  [ -f "${CONFIG_FILE}" ] || fail "Could not find config file \"$CONFIG_FILE\""
+  . "$1"
 }
 
 readArguments() {
   while getopts :b:c:d:gh:s: opt; do
-    case "$opt" in
-      b) BASE_PATH=$OPTARG;;
-      c) loadConfig $OPTARG;;
-      d) PODCAST_DIR=$OPTARG;;
+    case $opt in
+      b) BASE_PATH="$OPTARG";;
+      c) loadConfig "$OPTARG";;
+      d) PODCAST_DIR="$OPTARG";;
       g) RECORD=0;;
-      h) HOST=$OPTARG;;
-      s) STREAMRIPPER=$OPTARG;;
+      h) HOST="$OPTARG";;
+      s) STREAMRIPPER="$OPTARG";;
       ?) echo "Invalid option \"$OPTARG\"" >&2 && exit 1
     esac
   done
@@ -34,7 +37,7 @@ readArguments() {
   DURATION=$2
   URL=$3
   [ -z $PODCAST_DIR ] && PODCAST_DIR="$BASE_PATH/$NAME"
-  OUTPATH=$PODCAST_DIR/`date +%s`.mp3
+  OUTPATH=$PODCAST_DIR/`date +%Y-%m-%d`.mp3
 }
 
 record() {
@@ -42,7 +45,10 @@ record() {
     return
   fi
   mkdir -p "$PODCAST_DIR" || fail "Cannot create output directory"
-  $STREAMRIPPER "$URL" -s -A -a $OUTPATH -l `expr $DURATION "*" 60` --quiet
+  # append a UUID URL parameter to skip ads
+  UUID=$(uuidgen)
+  # example: cvlc -vvv 'http://playerservices.streamtheworld.com/api/livestream-redirect/WRURFM.mp3?uuid=ba818f8d-0f4b-4775-bbec-00ec32fa5bc4' --sout=file/mp3:/storage/files/podcasts/test.mp3 --run-time=60 vlc://quit
+  $STREAMRIPPER "${URL}?uuid=${UUID}" --sout="file://${OUTPATH}" --run-time="${DURATION}" vlc://quit
 }
 
 generateXML() {
@@ -50,9 +56,9 @@ generateXML() {
   <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/">
   <channel>
   <title>%s</title>
-  <description></description>
+  <description>%s</description>
   <itunes:title>%s</itunes:title>
-  <itunes:description></itunes:description>
+  <itunes:description>%s</itunes:description>
   <link>%s</link>
   %s
   <itunes:author>Blergh</itunes:author>'
@@ -60,10 +66,9 @@ generateXML() {
   </rss> '
 
   item='<item>
-  <title>%s vom %s</title>
-  <description>%s vom %s</description>
+  <title>%s - %s</title>
+  <description></description>
   <pubDate>%s</pubDate>
-  <link>%s</link>
   <guid>%s</guid>
   <itunes:duration>%s</itunes:duration>
   <enclosure url="%s" type="audio/mpeg"/>
@@ -78,24 +83,24 @@ generateXML() {
   then
     image="<itunes:image href=\"$HOST/$NAME.jpg\" />"
   fi
-  printf "$header" "$NAME" "$NAME" "$HOST" "$image" > $BASE_PATH/$NAME.xml
+  printf "$header" "$NAME" "$PODCAST_DESCRIPTION" "$NAME" "$PODCAST_DESCRIPTION" "$HOST/$NAME" "$image" > $BASE_PATH/$NAME.xml
   listEpisodes | extractDate | while read episodeDate
   do
-    humanDate=`date -j -r $episodeDate +%d.%m.`
-    rfcDate=`date -j -r $episodeDate +"%a, %d %b %Y %T %z"`
+    humanDate=`date -d "$episodeDate" +%Y-%m-%d`
+    pubDate=`date -d "$episodeDate" +"%a, %d %b %Y %T %z"`
     guid="$HOST/$NAME/$episodeDate"
     url="$HOST/$NAME/$episodeDate.mp3"
-    printf "$item" "$NAME" "$humanDate" "$NAME" "$humanDate" "$rfcDate" "$guid" "$guid" "$DURATION" "$url" "$image" >> $BASE_PATH/$NAME.xml
+    printf "$item" "$NAME" "$humanDate" "$pubDate" "$guid" "$DURATION" "$url" "$image" >> $BASE_PATH/$NAME.xml
   done
   printf "$footer\n" >> "$BASE_PATH/$NAME.xml"
 }
 
 listEpisodes() {
-  find $PODCAST_DIR -name "*.mp3" | sort -r
+  find "$PODCAST_DIR" -name "*.mp3" | sort -r
 }
 
 extractDate() {
-  sed -e "s/.*\/\([0-9]*\)\.mp3/\\1/g"
+  sed -e "s/.*\/\(.*\)\.mp3/\\1/g"
 }
 
 validateSettings() {
@@ -113,7 +118,7 @@ usage() {
 }
 
 blergh() {
-  readArguments $*
+  readArguments "$@"
   validateSettings
   record
   generateXML
@@ -123,4 +128,4 @@ fail() {
   echo $1 >&2 && exit 1
 }
 
-blergh $*
+blergh "$@"
